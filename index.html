@@ -1,13 +1,180 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
-  <title>Galaxy Blaster</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Galaxy Blaster Phaser</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+<style>body { margin:0; overflow:hidden; background:#000; } canvas { display:block; margin: 0 auto; }</style>
 </head>
 <body>
-  <canvas id="gameCanvas"></canvas>
-  <script src="script.js"></script>
+<script>
+const TOTAL_LEVELS = 10;
+const ENEMIES_PER_LEVEL = 10;
+let gameOver = false;
+
+const config = {
+  type: Phaser.AUTO,
+  width: 800,
+  height: 600,
+  physics: {
+    default: 'arcade',
+    arcade: { debug: false }
+  },
+  scene: { preload, create, update }
+};
+
+let player, cursors, bullets, enemies;
+let score = 0, level = 1;
+let scoreText, levelText, livesText;
+let shootSound, explosionSound;
+
+const game = new Phaser.Game(config);
+
+function preload() {
+  this.load.audio('shoot', 'https://cdn.jsdelivr.net/gh/photonstorm/phaser3-examples/public/assets/audio/SoundEffects/p-ping.mp3');
+  this.load.audio('explosion', 'https://cdn.jsdelivr.net/gh/photonstorm/phaser3-examples/public/assets/audio/SoundEffects/explosion.mp3');
+  this.make.graphics({ add: false })
+    .fillStyle(0x00ff00)
+    .fillRect(0, 0, 40, 20)
+    .generateTexture('player', 40, 20)
+    .clear()
+    .fillStyle(0xffff00)
+    .fillRect(0, 0, 5, 15)
+    .generateTexture('bullet', 5, 15);
+  this.load.image('ufo', 'https://examples.phaser.io/assets/sprites/ufo.png');
+}
+
+function create() {
+  shootSound = this.sound.add('shoot');
+  explosionSound = this.sound.add('explosion');
+
+  player = this.physics.add.sprite(400, 550, 'player').setCollideWorldBounds(true);
+
+  cursors = this.input.keyboard.createCursorKeys();
+
+  bullets = this.physics.add.group();
+  enemies = this.physics.add.group();
+
+  // Text display
+  scoreText = this.add.text(10, 10, 'Score: 0', { fontSize: '20px', fill: '#fff' });
+  levelText = this.add.text(10, 40, 'Level: 1/' + TOTAL_LEVELS, { fontSize: '20px', fill: '#fff' });
+  livesText = this.add.text(10, 70, 'Lives: 3', { fontSize: '20px', fill: '#fff' });
+
+  player.lives = 3;
+
+  this.physics.add.overlap(bullets, enemies, hitEnemy, null, this);
+  this.physics.add.overlap(player, enemies, hitPlayer, null, this);
+
+  spawnEnemies.call(this);
+
+  // Shooting logic
+  this.shootingEvent = null;
+  this.shootBullet = () => {
+    const range = 50;
+    const step = 10;
+    const speed = 300 + level * 30;
+    for (let offset = -range; offset <= range; offset += step) {
+      const b = bullets.create(player.x + offset, player.y - 20, 'bullet');
+      b.body.velocity.y = -speed;
+    }
+    shootSound.play();
+  };
+
+  this.input.keyboard.on('keydown-SPACE', () => {
+    if (!this.shootingEvent) {
+      this.shootBullet();
+      const fireRate = Math.max(300 - level * 20, 100);
+      this.shootingEvent = this.time.addEvent({
+        delay: fireRate,
+        callback: this.shootBullet,
+        callbackScope: this,
+        loop: true
+      });
+    }
+  });
+
+  this.input.keyboard.on('keyup-SPACE', () => {
+    if (this.shootingEvent) {
+      this.shootingEvent.remove(false);
+      this.shootingEvent = null;
+    }
+  });
+
+  // Touch input for mobile: tap left/right half to move, tap bottom center for shooting
+  this.input.on('pointerdown', pointer => {
+    if (pointer.y > 450) {
+      if (pointer.x < 400) player.setVelocityX(-300);
+      else player.setVelocityX(300);
+    } else {
+      this.shootBullet();
+    }
+  });
+  this.input.on('pointerup', () => {
+    player.setVelocityX(0);
+  });
+}
+
+function update() {
+  if (gameOver) return;
+
+  player.setVelocity(0);
+  if (cursors.left.isDown) player.setVelocityX(-300);
+  else if (cursors.right.isDown) player.setVelocityX(300);
+  if (cursors.up.isDown) player.setVelocityY(-300);
+  else if (cursors.down.isDown) player.setVelocityY(300);
+
+  bullets.children.each(b => {
+    if (b.y < 0) b.destroy();
+  });
+
+  enemies.children.each(e => {
+    if (e.y > 600) e.destroy();
+  });
+
+  if (enemies.countActive() === 0) {
+    level++;
+    if (level > TOTAL_LEVELS) return endGame(true);
+    levelText.setText('Level: ' + level + '/' + TOTAL_LEVELS);
+    spawnEnemies.call(this);
+  }
+}
+
+function spawnEnemies() {
+  const speedBase = level === 1 ? 50 : 100 + level * 30;
+  for (let i = 0; i < ENEMIES_PER_LEVEL; i++) {
+    const x = Phaser.Math.Between(50, 750);
+    const y = Phaser.Math.Between(-200, -20);
+    const u = enemies.create(x, y, 'ufo');
+    u.setDisplaySize(64, 64);
+    u.body.velocity.y = Phaser.Math.Between(speedBase, speedBase + 50);
+  }
+}
+
+function hitEnemy(bullet, enemy) {
+  bullet.destroy();
+  enemy.destroy();
+  explosionSound.play();
+  score += 10;
+  scoreText.setText('Score: ' + score);
+}
+
+function hitPlayer(playerSprite, enemy) {
+  enemy.destroy();
+  explosionSound.play();
+  player.lives--;
+  livesText.setText('Lives: ' + player.lives);
+  if (player.lives <= 0) endGame(false);
+}
+
+function endGame(won) {
+  gameOver = true;
+  this.physics.pause();
+  const message = won ? 'You Win! ' : 'Game Over! ';
+  if (confirm(message + 'Score: ' + score + '\nPlay Again?')) {
+    window.location.reload();
+  }
+}
+</script>
 </body>
 </html>
